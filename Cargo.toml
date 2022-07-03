@@ -1,0 +1,13 @@
+[package]
+name = "fbr_cache"
+version = "0.1.0"
+edition = "2021"
+readme = "README.md"
+authors = ["Roland Kuhn"]
+description = "A cache with frequency-based replacement strategy"
+documentation = "https://docs.rs/fbr_cache/latest/fbr_cache"
+repository = "https://github.com/rkuhn/fbr_cache"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+intrusive-collections = "0.9.4"
