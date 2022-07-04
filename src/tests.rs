@@ -203,3 +203,22 @@ fn clear() {
     drop(cache);
     assert_eq!(counter.load(Ordering::Relaxed), 12);
 }
+
+#[test]
+fn prio() {
+    let mut cache = FbrCache::<u32, String, 3>::with_age_threshold(5, 4);
+    cache.put_prio(0, 0.to_string());
+    for i in 1..6 {
+        cache.put(i, i.to_string());
+    }
+    assert_eq!(
+        cache.iter().collect::<Vec<_>>(),
+        vec![
+            (&5, &s("5"), 0, Region::New),
+            (&4, &s("4"), 0, Region::Middle),
+            (&3, &s("3"), 0, Region::Middle),
+            (&2, &s("2"), 0, Region::Old),
+            (&0, &s("0"), 1, Region::Old),
+        ]
+    );
+}

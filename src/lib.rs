@@ -54,6 +54,10 @@ impl<K, V> FbrEntry<K, V> {
         this.region = Region::New;
         count
     }
+    pub fn bump(ptr: &UnsafeRef<Self>) {
+        let this = unsafe { &mut *UnsafeRef::into_raw(ptr.clone()) };
+        this.count += 1;
+    }
     pub fn age(ptr: &UnsafeRef<Self>) -> usize {
         let this = unsafe { &mut *UnsafeRef::into_raw(ptr.clone()) };
         let count = this.count;
@@ -87,6 +91,12 @@ intrusive_adapter!(ListChain<K, V> = UnsafeRef<FbrEntry<K, V>>: FbrEntry<K, V> {
 ///
 /// The cache will allocate only during the initial filling phase, afterwards it
 /// reuses the heap allocations where values are held.
+///
+/// ## Requirements
+///
+/// - `C_MAX` must be at least 2
+/// - `capacity` must be at least 4
+/// - `age_threshold` must be at least 1
 pub struct FbrCache<K, V, const C_MAX: usize> {
     hash: HashMap<K, UnsafeRef<FbrEntry<K, V>>>,
     lru: LinkedList<ListLru<K, V>>,
@@ -180,25 +190,21 @@ impl<K: Hash + Eq + Clone, V, const C: usize> FbrCache<K, V, C> {
         if self.get(&key).is_some() {
             return;
         }
-        let entry = if self.len() >= self.capacity {
-            let e = self.evict();
-            FbrEntry::reuse(&e, key.clone(), value);
-            e
-        } else {
-            UnsafeRef::from_box(Box::new(FbrEntry::new(key.clone(), value)))
-        };
-        self.hash.insert(key, entry.clone());
-        self.lru.push_front(entry.clone());
-        move_boundaries(
-            Region::Old,
-            self.len(),
-            self.mid,
-            self.old,
-            &self.lru,
-            &mut self.mid_boundary,
-            &mut self.old_boundary,
-        );
-        self.chains[0].push_front(entry);
+        self.insert(key, value, false);
+    }
+
+    /// Put the given item into the cache with elevated priority.
+    ///
+    /// This means that the item starts out with a usage count of one instead
+    /// of zero. For cyclic usage patterns this means that priority items will
+    /// accumulate in the “old” region since non-priority items are evicted
+    /// before them. As usual, this works best if only a small fraction of
+    /// items get priority.
+    pub fn put_prio(&mut self, key: K, value: V) {
+        if self.get(&key).is_some() {
+            return;
+        }
+        self.insert(key, value, true);
     }
 
     /// Retrieve the value for a given key
@@ -246,6 +252,31 @@ impl<K: Hash + Eq + Clone, V, const C: usize> FbrCache<K, V, C> {
         } else {
             None
         }
+    }
+
+    fn insert(&mut self, key: K, value: V, prio: bool) {
+        let entry = if self.len() >= self.capacity {
+            let e = self.evict();
+            FbrEntry::reuse(&e, key.clone(), value);
+            e
+        } else {
+            UnsafeRef::from_box(Box::new(FbrEntry::new(key.clone(), value)))
+        };
+        if prio {
+            FbrEntry::bump(&entry);
+        }
+        self.hash.insert(key, entry.clone());
+        self.lru.push_front(entry.clone());
+        move_boundaries(
+            Region::Old,
+            self.len(),
+            self.mid,
+            self.old,
+            &self.lru,
+            &mut self.mid_boundary,
+            &mut self.old_boundary,
+        );
+        self.chains[entry.count].push_front(entry);
     }
 
     fn evict(&mut self) -> UnsafeRef<FbrEntry<K, V>> {
